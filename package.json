@@ -22,16 +22,16 @@
     "blur",
     "glass"
   ],
-  "author": "",
+  "author": "huiduab",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR_USERNAME/dsh-bg-image.git"
+    "url": "https://github.com/huiduab/dsh-bg-image.git"
   },
   "bugs": {
-    "url": "https://github.com/YOUR_USERNAME/dsh-bg-image/issues"
+    "url": "https://github.com/huiduab/dsh-bg-image/issues"
   },
-  "homepage": "https://github.com/YOUR_USERNAME/dsh-bg-image#readme",
+  "homepage": "https://github.com/huiduab/dsh-bg-image#readme",
   "peerDependencies": {
     "@deepseek-ai/dsh": "*"
   }
