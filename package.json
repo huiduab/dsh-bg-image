@@ -1,0 +1,38 @@
+{
+  "name": "dsh-bg-image",
+  "version": "1.0.0",
+  "description": "DSH background image beautifier — anime, landscape, photography sources with opacity/blur controls and localStorage persistence",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "cordis",
+    "plugin",
+    "background",
+    "wallpaper",
+    "beautify",
+    "anime",
+    "landscape",
+    "opacity",
+    "blur",
+    "glass"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/dsh-bg-image.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/dsh-bg-image/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/dsh-bg-image#readme",
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "*"
+  }
+}
