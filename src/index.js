@@ -87,9 +87,77 @@ return {
       el.style.display = 'block'
     }
 
-    function clearBg() { if (bgEl) { bgEl.style.display = 'none' } }
+    // --------------------------------------------------------------------------
+    // IndexedDB for local image storage (handles large DataURLs)
+    // --------------------------------------------------------------------------
+    var DB_NAME = 'dsh-bg-image-db'
+    var DB_STORE = 'images'
+    var DB_VERSION = 1
+
+    function openDB() {
+      return new Promise(function(resolve, reject) {
+        var req = indexedDB.open(DB_NAME, DB_VERSION)
+        req.onupgradeneeded = function() { req.result.createObjectStore(DB_STORE) }
+        req.onsuccess = function() { resolve(req.result) }
+        req.onerror = function() { reject(req.error) }
+      })
+    }
+
+    function idbPut(key, value) {
+      return openDB().then(function(db) {
+        return new Promise(function(resolve, reject) {
+          var tx = db.transaction(DB_STORE, 'readwrite')
+          tx.objectStore(DB_STORE).put(value, key)
+          tx.oncomplete = function() { db.close(); resolve() }
+          tx.onerror = function() { db.close(); reject(tx.error) }
+        })
+      })
+    }
+
+    function idbGet(key) {
+      return openDB().then(function(db) {
+        return new Promise(function(resolve, reject) {
+          var tx = db.transaction(DB_STORE, 'readonly')
+          var req = tx.objectStore(DB_STORE).get(key)
+          req.onsuccess = function() { db.close(); resolve(req.result) }
+          req.onerror = function() { db.close(); reject(req.error) }
+        })
+      })
+    }
+
+    function idbDelete(key) {
+      return openDB().then(function(db) {
+        return new Promise(function(resolve, reject) {
+          var tx = db.transaction(DB_STORE, 'readwrite')
+          tx.objectStore(DB_STORE).delete(key)
+          tx.oncomplete = function() { db.close(); resolve() }
+          tx.onerror = function() { db.close(); reject(tx.error) }
+        })
+      })
+    }
 
     function formatDuration(s) { if (s < 60) return s + 's'; var m = Math.floor(s / 60); if (m < 60) return m + 'm'; return Math.floor(m / 60) + 'h' }
+
+    // --------------------------------------------------------------------------
+    // Local image preview component (retrieves DataURL from IndexedDB)
+    // --------------------------------------------------------------------------
+    function LocalImagePreview(props) {
+      var img = props.image
+      var _R = React
+      var url = img.url
+      // For local images (stored as IndexedDB key), retrieve the DataURL
+      if (url && url.startsWith('local-')) {
+        var dataUrlSt = _R.useState(null)
+        var dataUrl = dataUrlSt[0]
+        _R.useEffect(function() {
+          idbGet(url).then(function(d) { if (d) dataUrlSt[1](d) })
+        }, [url])
+        if (!dataUrl) return _R.createElement('div', { style: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--dsw-alias-label-secondary, #6b7280)', fontSize: '12px' } }, 'Loading...')
+        return _R.createElement('img', { src: dataUrl, alt: '', style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }, onError: function(e) { e.target.style.display = 'none' } })
+      }
+      // For remote images, use URL directly
+      return _R.createElement('img', { src: url, alt: '', style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }, onError: function(e) { e.target.style.display = 'none' } })
+    }
 
     // --------------------------------------------------------------------------
     // Settings Panel Component
@@ -136,11 +204,41 @@ return {
       }, [autoRefresh, refreshInterval])
 
       function doRefresh() {
-        var img = null
-        if (sourceType === 'custom_url') { if (!customUrl.trim()) return; img = { url: customUrl.trim(), source: SOURCE_NAMES.custom_url[lang] } }
-        else if (sourceType === 'local_upload') { if (localDataUrl) img = { url: localDataUrl, source: localFileName || SOURCE_NAMES.local_upload[lang] }; else if (fileInputRef.current) fileInputRef.current.click(); return }
-        else { var baseUrl = SOURCE_URLS[sourceType]; if (baseUrl) { var sep = baseUrl.indexOf('?') >= 0 ? '&' : '?'; img = { url: baseUrl + sep + '_t=' + Date.now(), source: SOURCE_NAMES[sourceType][lang] } } }
-        if (img) { setCurrentImage(img); applyBg(img.url, opacity, blur) }
+        if (sourceType === 'custom_url') {
+          if (!customUrl.trim()) return
+          var img = { url: customUrl.trim(), source: SOURCE_NAMES.custom_url[lang] }
+          setCurrentImage(img)
+          applyBg(img.url, opacity, blur)
+          return
+        }
+        if (sourceType === 'local_upload') {
+          if (localDataUrl) {
+            // Retrieve actual DataURL from IndexedDB if it's a key
+            if (localDataUrl.startsWith('local-')) {
+              idbGet(localDataUrl).then(function(dataUrl) {
+                if (dataUrl) {
+                  var img = { url: localDataUrl, source: localFileName || SOURCE_NAMES.local_upload[lang], isLocal: true }
+                  setCurrentImage(img)
+                  applyBg(dataUrl, opacity, blur)
+                }
+              })
+            } else {
+              var img = { url: localDataUrl, source: localFileName || SOURCE_NAMES.local_upload[lang], isLocal: false }
+              setCurrentImage(img)
+              applyBg(localDataUrl, opacity, blur)
+            }
+          } else if (fileInputRef.current) {
+            fileInputRef.current.click()
+          }
+          return
+        }
+        var baseUrl = SOURCE_URLS[sourceType]
+        if (baseUrl) {
+          var sep = baseUrl.indexOf('?') >= 0 ? '&' : '?'
+          var img = { url: baseUrl + sep + '_t=' + Date.now(), source: SOURCE_NAMES[sourceType][lang] }
+          setCurrentImage(img)
+          applyBg(img.url, opacity, blur)
+        }
       }
 
       function handleFileChange(e) {
@@ -148,7 +246,23 @@ return {
         if (!f) return
         setLocalFileName(f.name)
         var r = new FileReader()
-        r.onload = function(ev) { var d = ev.target.result; setLocalDataUrl(d); var img = { url: d, source: f.name }; setCurrentImage(img); applyBg(d, opacity, blur) }
+        r.onload = function(ev) {
+          var dataUrl = ev.target.result
+          var imgKey = 'local-' + Date.now()
+          // Store large DataURL in IndexedDB, keep only key in localStorage
+          idbPut(imgKey, dataUrl).then(function() {
+            setLocalDataUrl(imgKey)
+            var img = { url: imgKey, source: f.name, isLocal: true }
+            setCurrentImage(img)
+            applyBg(dataUrl, opacity, blur)
+          }).catch(function() {
+            // Fallback: use DataURL directly if IndexedDB fails
+            setLocalDataUrl(dataUrl)
+            var img = { url: dataUrl, source: f.name, isLocal: false }
+            setCurrentImage(img)
+            applyBg(dataUrl, opacity, blur)
+          })
+        }
         r.readAsDataURL(f)
       }
 
@@ -157,8 +271,18 @@ return {
         if (currentImage && currentImage.url) {
           var prev = prevBgRef.current
           if (prev.url !== currentImage.url || prev.opacity !== opacity || prev.blur !== blur) {
-            applyBg(currentImage.url, opacity, blur)
-            prevBgRef.current = { url: currentImage.url, opacity: opacity, blur: blur }
+            // For local images, retrieve DataURL from IndexedDB
+            if (currentImage.url.startsWith('local-')) {
+              idbGet(currentImage.url).then(function(dataUrl) {
+                if (dataUrl) {
+                  applyBg(dataUrl, opacity, blur)
+                  prevBgRef.current = { url: currentImage.url, opacity: opacity, blur: blur }
+                }
+              })
+            } else {
+              applyBg(currentImage.url, opacity, blur)
+              prevBgRef.current = { url: currentImage.url, opacity: opacity, blur: blur }
+            }
           }
         }
       })
@@ -177,7 +301,7 @@ return {
       var blurRow = _R.createElement('div', { style: { marginTop: '24px' } }, _R.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' } }, _R.createElement('span', { style: st }, t.blur), _R.createElement('span', { style: { fontSize: '12px', fontVariantNumeric: 'tabular-nums', color: cs, fontWeight: 500 } }, blur + 'px')), _R.createElement('input', { type: 'range', min: '0', max: '30', step: '1', value: blur, onChange: function(e) { setBlur(parseInt(e.target.value)) }, style: { width: '100%', accentColor: cp } }))
       var refreshRow = _R.createElement('div', { style: { marginTop: '24px' } }, _R.createElement('label', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', padding: '4px 0' } }, _R.createElement('span', { style: st }, t.autoRefresh), _R.createElement('span', { onClick: function(e) { e.stopPropagation(); setAutoRefresh(!autoRefresh) }, style: { width: '32px', height: '18px', borderRadius: '9px', background: autoRefresh ? cp : cb, position: 'relative', cursor: 'pointer', transition: 'background 200ms ease', flexShrink: 0 } }, _R.createElement('span', { style: { position: 'absolute', top: '2px', left: autoRefresh ? '16px' : '2px', width: '14px', height: '14px', borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.15)', transition: 'left 200ms cubic-bezier(0.4, 0, 0.2, 1)' } }))), autoRefresh ? _R.createElement('div', { style: { marginTop: '12px' } }, _R.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' } }, _R.createElement('span', { style: st }, t.interval), _R.createElement('span', { style: { fontSize: '12px', fontVariantNumeric: 'tabular-nums', color: cs, fontWeight: 500 } }, formatDuration(refreshInterval))), _R.createElement('input', { type: 'range', min: '10', max: '3600', step: '10', value: refreshInterval, onChange: function(e) { setRefreshInterval(parseInt(e.target.value)) }, style: { width: '100%', accentColor: cp } })) : null)
       var actions = _R.createElement('div', { style: { marginTop: '28px', display: 'flex', gap: '8px' } }, _R.createElement('button', { onClick: doRefresh, style: { flex: 1, padding: '9px 16px', border: 'none', borderRadius: '8px', background: cp, color: '#000', cursor: 'pointer', fontSize: '13px', fontWeight: 500, fontFamily: 'inherit' } }, t.refreshNow), _R.createElement('button', { onClick: function() { setCurrentImage(null); clearBg() }, style: { padding: '9px 16px', border: '1px solid ' + cb, borderRadius: '8px', background: 'transparent', color: cl, cursor: 'pointer', fontSize: '13px', fontWeight: 500, fontFamily: 'inherit' } }, t.clear))
-      var imageInfo = currentImage ? _R.createElement('div', { style: { marginTop: '24px' } }, _R.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' } }, _R.createElement('span', { style: st }, t.current), _R.createElement('span', { style: { fontSize: '11px', color: cs, maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, currentImage.source)), _R.createElement('div', { style: { borderRadius: '6px', overflow: 'hidden', border: '1px solid ' + cb, aspectRatio: '16 / 9', background: 'var(--dsw-alias-bg-layer-2, #f3f4f6)' } }, _R.createElement('img', { src: currentImage.url, alt: '', style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' }, onError: function(e) { e.target.style.display = 'none' } }))) : null
+      var imageInfo = currentImage ? _R.createElement('div', { style: { marginTop: '24px' } }, _R.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' } }, _R.createElement('span', { style: st }, t.current), _R.createElement('span', { style: { fontSize: '11px', color: cs, maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, currentImage.source)), _R.createElement('div', { style: { borderRadius: '6px', overflow: 'hidden', border: '1px solid ' + cb, aspectRatio: '16 / 9', background: 'var(--dsw-alias-bg-layer-2, #f3f4f6)' } }, _R.createElement(LocalImagePreview, { image: currentImage }))) : null
 
       return _R.createElement('div', { style: { padding: '20px 24px' } },
         _R.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' } }, _R.createElement('h2', { style: { margin: 0, fontSize: '17px', fontWeight: 600, color: cl, letterSpacing: '-0.01em' } }, t.title), _R.createElement('button', { onClick: function() { setLang(lang === 'zh' ? 'en' : 'zh') }, style: { padding: '4px 10px', border: '1px solid ' + cb, borderRadius: '6px', background: 'transparent', color: cs, fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit' } }, t.lang)),
@@ -191,7 +315,15 @@ return {
     // --------------------------------------------------------------------------
     var startup = loadSettings()
     if (startup && startup.currentImage && startup.currentImage.url) {
-      applyBg(startup.currentImage.url, startup.opacity || 0.35, startup.blur || 0)
+      var startupUrl = startup.currentImage.url
+      // For local images, retrieve DataURL from IndexedDB
+      if (startupUrl.startsWith('local-')) {
+        idbGet(startupUrl).then(function(dataUrl) {
+          if (dataUrl) applyBg(dataUrl, startup.opacity || 0.35, startup.blur || 0)
+        })
+      } else {
+        applyBg(startupUrl, startup.opacity || 0.35, startup.blur || 0)
+      }
     }
 
     // --------------------------------------------------------------------------

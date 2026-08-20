@@ -8,7 +8,7 @@ DeepSeek Harness 背景美化插件 — 多图源壁纸、不透明度/模糊调
 
 ## 预览
 
-| 原始界面 | 美化后 |
+| 修改页面 | 美化后 |
 |----------|--------|
 | ![原始](docs/test.png) | ![美化后](docs/test3.png) |
 | ![原始2](docs/test2.png) | ![美化后](docs/test3.png) |
